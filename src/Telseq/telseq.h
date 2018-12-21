@@ -17,6 +17,10 @@
 #include "config.h"
 #include "Util.h"
 
+extern "C" {
+#include "htslib/sam.h"
+}
+
 
 //
 // typedef
@@ -111,11 +115,11 @@ struct Headers{
 		headers.push_back(ScanParameters::LABEL_DUP);
 		headers.push_back(ScanParameters::LABEL_LEN);
 
-		for(int i=0;i < ScanParameters::TEL_MOTIF_N;i++){
+		for(uint64_t i=0;i < ScanParameters::TEL_MOTIF_N;i++){
 			std::string h = ScanParameters::LABEL_TEL + NumberToString(i);
 			headers.push_back(h);
 		}
-		for(int i=0;i<ScanParameters::GC_BIN_N;i++){
+		for(uint64_t i=0;i<ScanParameters::GC_BIN_N;i++){
 			std::string h = ScanParameters::LABEL_GC + NumberToString(i);
 			headers.push_back(h);
 		}
@@ -126,8 +130,8 @@ struct Headers{
 
 
 void parseScanOptions(int argc, char** argv);
-double calcGC(const std::string& seq);
-int countMotif(std::string &read, std::string pattern, std::string pattern_revcomp);
+double calcGC(const char* read, int32_t len);
+int countMotif(const std::string &read, const std::string pattern, const std::string pattern_revcomp);
 double calcTelLength(ScanResults results);
 int scanBam();
 int outputresults(std::vector< std::map<std::string, ScanResults> > );

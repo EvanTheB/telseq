@@ -14,10 +14,16 @@
 #include "telseq.h"
 #include "Timer.h"
 #include "math.h"
-#include "api/BamReader.h"
-#include "api/BamWriter.h"
+// #include "api/BamReader.h"
+// #include "api/BamWriter.h"
 #include "Util.h"
 #include "prettyprint.h"
+
+
+#include <string.h>
+extern "C" {
+#include "htslib/sam.h"
+}
 
 //
 // Getopt
@@ -82,9 +88,9 @@ static const char* shortopts = "f:o:k:z:e:r:p:Hhvmuw";
 enum { OPT_HELP = 1, OPT_VERSION };
 
 static const struct option longopts[] = {
-	{ "bamlist",		optional_argument, NULL, 'f' },
-    { "output-dir",		optional_argument, NULL, 'o' },
-    { "exomebed",		optional_argument, NULL, 'e' },
+        { "bamlist",            optional_argument, NULL, 'f' },
+    { "output-dir",             optional_argument, NULL, 'o' },
+    { "exomebed",               optional_argument, NULL, 'e' },
     { "help",               no_argument,       NULL, OPT_HELP },
     { "version",            no_argument,       NULL, OPT_VERSION },
     { NULL, 0, NULL, 0 }
@@ -158,153 +164,181 @@ int scanBam()
       std::cerr << "Start analysing BAM " << opt::bamlist[i] << "\n";
 
       // Open the bam files for reading/writing
-      BamTools::BamReader* pBamReader = new BamTools::BamReader;
+      samFile *f = sam_open(opt::bamlist[i].c_str(), "r");
+      if (!f) exit(EXIT_FAILURE);
 
-      pBamReader->Open(opt::bamlist[i]);
+      // BamTools::BamReader* pBamReader = new BamTools::BamReader;
+
+      // pBamReader->Open(opt::bamlist[i]);
 
       // get bam headers
-      const BamTools::SamHeader header = pBamReader ->GetHeader();
+      bam_hdr_t *h = sam_hdr_read(f);
+      if (!h) exit(EXIT_FAILURE);
+
+      // const BamTools::SamHeader header = pBamReader ->GetHeader();
       bool rggroups=false;
 
-      if(opt::ignorerg){ // ignore read groups
-	      std::cerr << "Treat all reads in BAM as if they were from a same sample" << std::endl;
-	      ScanResults results;
-	      results.sample = opt::unknown;
-	      resultmap[opt::unknown]=results;
-      }else{
-	std::map <std::string, std::string> readgroups;
-	std::map <std::string, std::string> readlibs;
+      // TODO rg in htslib
+      // if(opt::ignorerg){ // ignore read groups
+      //         std::cerr << "Treat all reads in BAM as if they were from a same sample" << std::endl;
+      //         ScanResults results;
+      //         results.sample = opt::unknown;
+      //         resultmap[opt::unknown]=results;
+      // }else{
+      //   std::map <std::string, std::string> readgroups;
+      //   std::map <std::string, std::string> readlibs;
 
-	rggroups = header.HasReadGroups();
+      //   rggroups = header.HasReadGroups();
 
-	if(rggroups){
-	  for(BamTools::SamReadGroupConstIterator it = header.ReadGroups.Begin(); it != header.ReadGroups.End();++it){
-	    readgroups[it->ID]= it->Sample;
-	    if(it->HasLibrary()){
-	      readlibs[it->ID] = it -> Library;
-	    }else{
-	      readlibs[it->ID] = opt::unknown;
-	    }
-	  }
-	  std::cerr<<"Specified BAM has "<< readgroups.size()<< " read groups" << std::endl;
+      //   if(rggroups){
+      //     for(BamTools::SamReadGroupConstIterator it = header.ReadGroups.Begin(); it != header.ReadGroups.End();++it){
+      //       readgroups[it->ID]= it->Sample;
+      //       if(it->HasLibrary()){
+      //         readlibs[it->ID] = it -> Library;
+      //       }else{
+      //         readlibs[it->ID] = opt::unknown;
+      //       }
+      //     }
+      //     std::cerr<<"Specified BAM has "<< readgroups.size()<< " read groups" << std::endl;
 
-	  for(std::map<std::string, std::string>::iterator it = readgroups.begin(); it != readgroups.end(); ++it){
-		  ScanResults results;
-		  std::string rgid = it -> first;
-		  results.sample = it -> second;
-		  results.lib = readlibs[rgid];
-		  resultmap[rgid]=results; //results are identified by RG tag.
-	  }
+      //     for(std::map<std::string, std::string>::iterator it = readgroups.begin(); it != readgroups.end(); ++it){
+      //             ScanResults results;
+      //             std::string rgid = it -> first;
+      //             results.sample = it -> second;
+      //             results.lib = readlibs[rgid];
+      //             resultmap[rgid]=results; //results are identified by RG tag.
+      //     }
 
-	}else{
-	  std::cerr << "Warning: can't find RG tag in the BAM header" << std::endl;
-	  std::cerr << "Warning: treat all reads in BAM as if they were from a same sample" << std::endl;
-	  ScanResults results;
-	  results.sample = opt::unknown;
-	  results.lib = opt::unknown;
-	  resultmap[opt::unknown]=results;
-	}
-      }
+      //   }else{
+      //     std::cerr << "Warning: can't find RG tag in the BAM header" << std::endl;
+      //     std::cerr << "Warning: treat all reads in BAM as if they were from a same sample" << std::endl;
+      //     ScanResults results;
+      //     results.sample = opt::unknown;
+      //     results.lib = opt::unknown;
+      //     resultmap[opt::unknown]=results;
+      //   }
+      // }
 
-      BamTools::BamAlignment record1;
+      // BamTools::BamAlignment record1;
+      bam1_t *b1 = bam_init1();
+      if (!b1) exit(EXIT_FAILURE);
+
       bool done = false;
 
       int nprocessed=0; // number of reads analyzed
       int ntotal=0; // number of reads scanned in bam (we skip some reads, see below)
-      while(!done) {
-	ntotal ++;
-	done = !pBamReader -> GetNextAlignment(record1);
-	std::string tag = opt::unknown;
-	if(rggroups){
-	  // skip reads that do not have read group tag
-	  if(record1.HasTag("RG")){
-	    record1.GetTag("RG", tag);
-	  }else{
-	    std::cerr << "can't find RG tag for read at position {" << record1.RefID << ":" << record1.Position << "}" << std::endl;
-	    std::cerr << "skip this read" << std::endl;
-	    continue;
-	  }
-	}
+      int read_err;
+      while ((read_err = sam_read1(f, h, b1)) >= 0)
+      {
+        ntotal ++;
+        // done = !pBamReader -> GetNextAlignment(record1);
+        std::string tag = opt::unknown;
+        // if(rggroups){
+        //   // skip reads that do not have read group tag
+        //   if(record1.HasTag("RG")){
+        //     record1.GetTag("RG", tag);
+        //   }else{
+        //     std::cerr << "can't find RG tag for read at position {" << record1.RefID << ":" << record1.Position << "}" << std::endl;
+        //     std::cerr << "skip this read" << std::endl;
+        //     continue;
+        //   }
+        // }
 
-	// skip reads with readgroup not defined in BAM header
-	if(resultmap.find(tag) == resultmap.end()){
-	  std::cerr << "RG tag {" << tag << "} for read at position ";
-	  std::cerr << "{" << record1.RefID << ":" << record1.Position << "} doesn't exist in BAM header.";
-	  continue;
-	}
+        // skip reads with readgroup not defined in BAM header
+        // if(resultmap.find(tag) == resultmap.end()){
+        //   std::cerr << "RG tag {" << tag << "} for read at position ";
+        //   std::cerr << "{" << record1.RefID << ":" << record1.Position << "} doesn't exist in BAM header.";
+        //   continue;
+        // }
 
-	// for exome, exclude reads mapped to the exome regions.
-	if(isExome){
-	  range rg;
-	  rg.first = record1.Position;
-	  rg.second = record1.Position + record1.Length;
-	  std::string chrm =  refID2Name(record1.RefID);
+        // for exome, exclude reads mapped to the exome regions.
+        // if(isExome){
+        //   range rg;
+        //   rg.first = record1.Position;
+        //   rg.second = record1.Position + record1.Length;
+        //   std::string chrm =  refID2Name(record1.RefID);
 
-	  if(chrm != "-1"){ // check if overlap exome when the read is mapped to chr1-22, X, Y
-	    std::map<std::string, std::vector<range> >::iterator chrmit = opt::exomebed.find(chrm);
-	    if(chrmit == opt::exomebed.end()) {
-		// unmapped reads can have chr names as a star (*). We also don't consider MT reads.
-		resultmap[tag].n_exreadsChrUnmatched +=1;
-	    } else {
-	      std::vector<range>::iterator itend = opt::exomebed[chrm].end();
-	      std::map<std::string, std::vector<range>::iterator>::iterator lastfoundchrmit = lastfound.find(chrm);
-	      if(lastfoundchrmit == lastfound.end()){ // first entry to this chrm
-		      lastfound[chrm] = chrmit->second.begin();// start from begining
-	      }
-	      // set the hint to where the previous found is
-	      searchhint = lastfound[chrm];
-	      std::vector<range>::iterator itsearch = searchRange(searchhint, itend, rg);
-	      // if found
-	      if(itsearch != itend){// if found
-		searchhint = itsearch;
-		resultmap[tag].n_exreadsExcluded +=1;
-		lastfound[chrm] = searchhint; // update search hint
-		continue;
-	      }
-	    }
+        //   if(chrm != "-1"){ // check if overlap exome when the read is mapped to chr1-22, X, Y
+        //     std::map<std::string, std::vector<range> >::iterator chrmit = opt::exomebed.find(chrm);
+        //     if(chrmit == opt::exomebed.end()) {
+        //         // unmapped reads can have chr names as a star (*). We also don't consider MT reads.
+        //         resultmap[tag].n_exreadsChrUnmatched +=1;
+        //     } else {
+        //       std::vector<range>::iterator itend = opt::exomebed[chrm].end();
+        //       std::map<std::string, std::vector<range>::iterator>::iterator lastfoundchrmit = lastfound.find(chrm);
+        //       if(lastfoundchrmit == lastfound.end()){ // first entry to this chrm
+        //               lastfound[chrm] = chrmit->second.begin();// start from begining
+        //       }
+        //       // set the hint to where the previous found is
+        //       searchhint = lastfound[chrm];
+        //       std::vector<range>::iterator itsearch = searchRange(searchhint, itend, rg);
+        //       // if found
+        //       if(itsearch != itend){// if found
+        //         searchhint = itsearch;
+        //         resultmap[tag].n_exreadsExcluded +=1;
+        //         lastfound[chrm] = searchhint; // update search hint
+        //         continue;
+        //       }
+        //     }
 
-	  }
-	}
+        //   }
+        // }
 
-	resultmap[tag].numTotal +=1;
+        resultmap[tag].numTotal +=1;
 
-	if(record1.IsMapped()) {
-	    resultmap[tag].numMapped += 1;
-	}
+        // if(record1.IsMapped()) {
+        if (!(b1->core.flag & BAM_FUNMAP)) {
+            resultmap[tag].numMapped += 1;
+        }
 
-	if(record1.IsDuplicate()) {
-	    resultmap[tag].numDuplicates +=1;
-	}
-
-	double gc = calcGC(record1.QueryBases);
-	int ptn_count = countMotif(record1.QueryBases, opt::PATTERN, opt::PATTERN_REV);
-	// when the read length exceeds 100bp, number of patterns might exceed the boundary
-	if (ptn_count > ScanParameters::TEL_MOTIF_N-1){
-	    continue;
-	}
-	resultmap[tag].telcounts[ptn_count]+=1;
+        // if(record1.IsDuplicate()) {
+        if (b1->core.flag & BAM_FDUP) {
+            resultmap[tag].numDuplicates +=1;
+        }
 
 
-	if(gc >= ScanParameters::GC_LOWERBOUND && gc <= ScanParameters::GC_UPPERBOUND){
-	  // get index for GC bin.
-	  int idx = floor((gc-ScanParameters::GC_LOWERBOUND)/ScanParameters::GC_BINSIZE);
-	  assert(idx >=0 && idx <= ScanParameters::GC_BIN_N-1);
-	  if(idx > ScanParameters::GC_BIN_N-1){
-	    std::cerr << nprocessed << " GC:{"<< gc << "} telcounts:{"<< ptn_count <<"} GC bin index out of bound:" << idx << "\n";
-	    exit(EXIT_FAILURE);
-	  }
-	  resultmap[tag].gccounts[idx]+=1;
-	}
+        char *read = (char*)malloc(b1->core.l_qseq + 1);
+        if (!read) exit(EXIT_FAILURE);
+        read[b1->core.l_qseq] = 0;
+        for (int i = 0; i < b1->core.l_qseq; ++i)
+        {
+            read[i] = seq_nt16_str[bam_seqi(bam_get_seq(b1), i)];
+        }
+        double gc = calcGC(read, b1->core.l_qseq);
+        // double gc = calcGC(record1.QueryBases);
+        int ptn_count = countMotif(std::string(read), opt::PATTERN, opt::PATTERN_REV);
+        // int ptn_count = countMotif(record1.QueryBases, opt::PATTERN, opt::PATTERN_REV);
+        free(read);
+        // when the read length exceeds 100bp, number of patterns might exceed the boundary
+        if ((uint64_t)ptn_count > ScanParameters::TEL_MOTIF_N-1){
+            continue;
+        }
+        resultmap[tag].telcounts[ptn_count]+=1;
 
-	nprocessed++;
 
-	if( nprocessed%10000000 == 0){
-	  std::cerr << "[scan] processed " << nprocessed << " reads \n" ;
-	}
+        if(gc >= ScanParameters::GC_LOWERBOUND && gc <= ScanParameters::GC_UPPERBOUND){
+          // get index for GC bin.
+          int idx = floor((gc-ScanParameters::GC_LOWERBOUND)/ScanParameters::GC_BINSIZE);
+          assert(idx >=0 && idx <= ScanParameters::GC_BIN_N-1);
+          if(idx > ScanParameters::GC_BIN_N-1){
+            std::cerr << nprocessed << " GC:{"<< gc << "} telcounts:{"<< ptn_count <<"} GC bin index out of bound:" << idx << "\n";
+            exit(EXIT_FAILURE);
+          }
+          resultmap[tag].gccounts[idx]+=1;
+        }
+
+        nprocessed++;
+
+        if( nprocessed%10000000 == 0){
+          std::cerr << "[scan] processed " << nprocessed << " reads \n" ;
+        }
       }
 
-      pBamReader->Close();
-      delete pBamReader;
+      bam_destroy1(b1);
+      bam_hdr_destroy(h);
+      sam_close(f);
+      // pBamReader->Close();
+      // delete pBamReader;
 
       // consider each BAM separately
       resultlist.push_back(resultmap);
@@ -330,213 +364,213 @@ int scanBam()
 
 void printlog(std::vector< std::map<std::string, ScanResults> > resultlist){
 
-	for(size_t i =0; i< resultlist.size(); i++){
-		auto rmap = resultlist[i];
-		for(std::map<std::string, ScanResults>::iterator it= rmap.begin();
-				it != rmap.end(); ++it){
+        for(size_t i =0; i< resultlist.size(); i++){
+                auto rmap = resultlist[i];
+                for(std::map<std::string, ScanResults>::iterator it= rmap.begin();
+                                it != rmap.end(); ++it){
 
-			std::string rg = it ->first;
-			ScanResults result = it -> second;
-			std::cout << "BAM:" << rg << std::endl;
-			std::cout << "	chr ID unmatched reads: " << result.n_exreadsChrUnmatched << std::endl;
-			std::cout << "	exome reads excluded: " << result.n_exreadsExcluded << std::endl;
-		}
-	}
+                        std::string rg = it ->first;
+                        ScanResults result = it -> second;
+                        std::cout << "BAM:" << rg << std::endl;
+                        std::cout << "  chr ID unmatched reads: " << result.n_exreadsChrUnmatched << std::endl;
+                        std::cout << "  exome reads excluded: " << result.n_exreadsExcluded << std::endl;
+                }
+        }
 
 }
 
 
 void printout(std::string rg, ScanResults result, std::ostream* pWriter){
 
-	*pWriter << rg << ScanParameters::FIELD_SEP;
-	*pWriter << result.lib << ScanParameters::FIELD_SEP;
-	*pWriter << result.sample << ScanParameters::FIELD_SEP;
-	*pWriter << result.numTotal << ScanParameters::FIELD_SEP;
-	*pWriter << result.numMapped << ScanParameters::FIELD_SEP;
-	*pWriter << result.numDuplicates << ScanParameters::FIELD_SEP;
+        *pWriter << rg << ScanParameters::FIELD_SEP;
+        *pWriter << result.lib << ScanParameters::FIELD_SEP;
+        *pWriter << result.sample << ScanParameters::FIELD_SEP;
+        *pWriter << result.numTotal << ScanParameters::FIELD_SEP;
+        *pWriter << result.numMapped << ScanParameters::FIELD_SEP;
+        *pWriter << result.numDuplicates << ScanParameters::FIELD_SEP;
 
-	result.telLenEstimate = calcTelLength(result);
-	if(result.telLenEstimate==-1){
-		std::cerr << "Telomere length estimate unknown. No read was found with telomeric GC composition.\n";
-		*pWriter << opt::unknown << ScanParameters::FIELD_SEP;
-	}else if(result.telLenEstimate>1000000){
-		std::cerr << "Telomere length estimate unknown. Possibly due to not enough representation of genome.\n";
-		*pWriter << opt::unknown << ScanParameters::FIELD_SEP;
-	}else if(result.telLenEstimate==0){
-		std::cerr << "Telomere length estimate unknown. No read contains more than " << opt::tel_k << " telomere repeats.\n";
-		*pWriter << opt::unknown << ScanParameters::FIELD_SEP;
-	}
-	else{
-		*pWriter << result.telLenEstimate << ScanParameters::FIELD_SEP;
-	}
+        result.telLenEstimate = calcTelLength(result);
+        if(result.telLenEstimate==-1){
+                std::cerr << "Telomere length estimate unknown. No read was found with telomeric GC composition.\n";
+                *pWriter << opt::unknown << ScanParameters::FIELD_SEP;
+        }else if(result.telLenEstimate>1000000){
+                std::cerr << "Telomere length estimate unknown. Possibly due to not enough representation of genome.\n";
+                *pWriter << opt::unknown << ScanParameters::FIELD_SEP;
+        }else if(result.telLenEstimate==0){
+                std::cerr << "Telomere length estimate unknown. No read contains more than " << opt::tel_k << " telomere repeats.\n";
+                *pWriter << opt::unknown << ScanParameters::FIELD_SEP;
+        }
+        else{
+                *pWriter << result.telLenEstimate << ScanParameters::FIELD_SEP;
+        }
 
-	for (std::size_t j = 0, max = result.telcounts.size(); j != max; ++j){
-		*pWriter << result.telcounts[j] << ScanParameters::FIELD_SEP;
-	}
-	for (std::size_t k = 0, max = result.gccounts.size(); k != max; ++k){
-		*pWriter << result.gccounts[k] << ScanParameters::FIELD_SEP;
-	}
-	*pWriter << "\n";
+        for (std::size_t j = 0, max = result.telcounts.size(); j != max; ++j){
+                *pWriter << result.telcounts[j] << ScanParameters::FIELD_SEP;
+        }
+        for (std::size_t k = 0, max = result.gccounts.size(); k != max; ++k){
+                *pWriter << result.gccounts[k] << ScanParameters::FIELD_SEP;
+        }
+        *pWriter << "\n";
 }
 
 
 int outputresults(std::vector< std::map<std::string, ScanResults> > resultlist){
 
-	std::ostream* pWriter;
-	bool tostdout = opt::outputfile.empty() ? true:false;
-	if(tostdout){
-		pWriter = &std::cout;
-	}else{
-		pWriter = createWriter(opt::outputfile);
-	}
+        std::ostream* pWriter;
+        bool tostdout = opt::outputfile.empty() ? true:false;
+        if(tostdout){
+                pWriter = &std::cout;
+        }else{
+                pWriter = createWriter(opt::outputfile);
+        }
 
-	if(opt::writerheader){
-		Headers hd;
-		for(size_t h=0; h<hd.headers.size();h++){
-			*pWriter << hd.headers[h] << ScanParameters::FIELD_SEP;
-		}
-		*pWriter << "\n";
-	}
+        if(opt::writerheader){
+                Headers hd;
+                for(size_t h=0; h<hd.headers.size();h++){
+                        *pWriter << hd.headers[h] << ScanParameters::FIELD_SEP;
+                }
+                *pWriter << "\n";
+        }
 
-	ScanResults mergedrs;
-	std::string grpnames = "";
+        ScanResults mergedrs;
+        std::string grpnames = "";
 
-	for(size_t i=0; i < resultlist.size();++i){
+        for(size_t i=0; i < resultlist.size();++i){
 
-		std::map<std::string, ScanResults> resultmap = resultlist[i];
+                std::map<std::string, ScanResults> resultmap = resultlist[i];
 
-		// if merge read groups, take weighted average for all measures
-		bool domg = opt::mergerg && resultmap.size() > 1? true:false;
+                // if merge read groups, take weighted average for all measures
+                bool domg = opt::mergerg && resultmap.size() > 1? true:false;
 
-		for(std::map<std::string, ScanResults>::iterator it= resultmap.begin();
-				it != resultmap.end(); ++it){
+                for(std::map<std::string, ScanResults>::iterator it= resultmap.begin();
+                                it != resultmap.end(); ++it){
 
-			std::string rg = it ->first;
-			ScanResults result = it -> second;
+                        std::string rg = it ->first;
+                        ScanResults result = it -> second;
 
-			if(domg){
-				if(grpnames.size()==0){
-					grpnames += rg;
-				}else{
-					grpnames += "|"+rg;
-				}
+                        if(domg){
+                                if(grpnames.size()==0){
+                                        grpnames += rg;
+                                }else{
+                                        grpnames += "|"+rg;
+                                }
 
-				mergedrs.sample = result.sample;
-				mergedrs.numTotal += result.numTotal;
-				mergedrs.numMapped += result.numMapped * result.numTotal;
-				mergedrs.numDuplicates += result.numDuplicates * result.numTotal;
-				mergedrs.telLenEstimate += calcTelLength(result)* result.numTotal;
+                                mergedrs.sample = result.sample;
+                                mergedrs.numTotal += result.numTotal;
+                                mergedrs.numMapped += result.numMapped * result.numTotal;
+                                mergedrs.numDuplicates += result.numDuplicates * result.numTotal;
+                                mergedrs.telLenEstimate += calcTelLength(result)* result.numTotal;
 
-				for (std::size_t j = 0, max = result.telcounts.size(); j != max; ++j){
-					mergedrs.telcounts[j] += result.telcounts[j]* result.numTotal;
-				}
-				for (std::size_t k = 0, max = result.gccounts.size(); k != max; ++k){
-					mergedrs.gccounts[k] += result.gccounts[k]* result.numTotal;
-				}
-				continue;
-			}else{
-				printout(rg, result, pWriter);
-			}
-		}
+                                for (std::size_t j = 0, max = result.telcounts.size(); j != max; ++j){
+                                        mergedrs.telcounts[j] += result.telcounts[j]* result.numTotal;
+                                }
+                                for (std::size_t k = 0, max = result.gccounts.size(); k != max; ++k){
+                                        mergedrs.gccounts[k] += result.gccounts[k]* result.numTotal;
+                                }
+                                continue;
+                        }else{
+                                printout(rg, result, pWriter);
+                        }
+                }
 
-		//in this case calculate weighted average
-		if(domg){
+                //in this case calculate weighted average
+                if(domg){
 
-			mergedrs.numMapped /= mergedrs.numTotal;
-			mergedrs.numDuplicates /= mergedrs.numTotal;
-			mergedrs.telLenEstimate /= mergedrs.numTotal;
+                        mergedrs.numMapped /= mergedrs.numTotal;
+                        mergedrs.numDuplicates /= mergedrs.numTotal;
+                        mergedrs.telLenEstimate /= mergedrs.numTotal;
 
-			for (std::size_t j = 0, max = mergedrs.telcounts.size(); j != max; ++j){
-				mergedrs.telcounts[j] /= mergedrs.numTotal;
-			}
-			for (std::size_t k = 0, max = mergedrs.gccounts.size(); k != max; ++k){
-				mergedrs.gccounts[k] /= mergedrs.numTotal;
-			}
+                        for (std::size_t j = 0, max = mergedrs.telcounts.size(); j != max; ++j){
+                                mergedrs.telcounts[j] /= mergedrs.numTotal;
+                        }
+                        for (std::size_t k = 0, max = mergedrs.gccounts.size(); k != max; ++k){
+                                mergedrs.gccounts[k] /= mergedrs.numTotal;
+                        }
 
-			mergedrs.numTotal  /= resultmap.size();
+                        mergedrs.numTotal  /= resultmap.size();
 
-			printout(grpnames, mergedrs, pWriter);
-		};
-	}
+                        printout(grpnames, mergedrs, pWriter);
+                };
+        }
 
-	if(!tostdout){
-		delete pWriter;
-	}
-	return 0;
+        if(!tostdout){
+                delete pWriter;
+        }
+        return 0;
 }
 
 double calcTelLength(ScanResults results){
 
-	float acc = 0;
-	for(std::size_t i=opt::tel_k, max = results.telcounts.size(); i !=max; ++i){
-		acc += results.telcounts[i];
-	}
+        float acc = 0;
+        for(std::size_t i=opt::tel_k, max = results.telcounts.size(); i !=max; ++i){
+                acc += results.telcounts[i];
+        }
 
-	float gc_tel = 0;
-	for(std::size_t i=0, max = results.gccounts.size(); i !=max; ++i){
-		float gc1=ScanParameters::GC_LOWERBOUND + ScanParameters::GC_BINSIZE*i;
-		float gc2=ScanParameters::GC_LOWERBOUND + ScanParameters::GC_BINSIZE*(i+1);
-		if(gc1 >= ScanParameters::GC_TELOMERIC_LOWERBOUND && gc2 <= ScanParameters::GC_TELOMERIC_UPPERBOUND ){
-			gc_tel += results.gccounts[i];
-		}
-	}
+        float gc_tel = 0;
+        for(std::size_t i=0, max = results.gccounts.size(); i !=max; ++i){
+                float gc1=ScanParameters::GC_LOWERBOUND + ScanParameters::GC_BINSIZE*i;
+                float gc2=ScanParameters::GC_LOWERBOUND + ScanParameters::GC_BINSIZE*(i+1);
+                if(gc1 >= ScanParameters::GC_TELOMERIC_LOWERBOUND && gc2 <= ScanParameters::GC_TELOMERIC_UPPERBOUND ){
+                        gc_tel += results.gccounts[i];
+                }
+        }
 
-	if(gc_tel == 0){
-		return -1;
-	}
+        if(gc_tel == 0){
+                return -1;
+        }
 
-	return (acc/gc_tel)*float(ScanParameters::GENOME_LENGTH_AT_TEL_GC)/ScanParameters::LENGTH_UNIT/ScanParameters::TELOMERE_ENDS;
+        return (acc/gc_tel)*float(ScanParameters::GENOME_LENGTH_AT_TEL_GC)/ScanParameters::LENGTH_UNIT/ScanParameters::TELOMERE_ENDS;
 }
 
 
 
-int countMotif(std::string &read, std::string pattern, std::string pattern_revcomp){
+// int countMotif(const char *read, const char *pattern, const char *revpattern)
+int countMotif(const std::string &read, const std::string pattern, const std::string pattern_revcomp){
 
-	int motifcount1 = 0;
-	int motifcount2 = 0;
+    int motifcount1 = 0;
+    int motifcount2 = 0;
 
-	size_t p1 = read.find(pattern, 0);
-	while(p1 != std::string::npos)
-	{
-	    p1 = read.find(pattern,p1+pattern.size());
-	    motifcount1 += 1;
-	}
-
-	size_t p2 = read.find(pattern_revcomp, 0);
-	while(p2 != std::string::npos)
-	{
-	    p2 = read.find(pattern_revcomp,p2+pattern_revcomp.size());
-	    motifcount2 += 1;
-	}
-
-	return motifcount1 > motifcount2? motifcount1:motifcount2;
-
-}
-
-double calcGC(const std::string& seq)
-{
-    double num_gc = 0.0f;
-    double num_total = 0.0f;
-    for(size_t i = 0; i < seq.size(); ++i)
+    size_t p1 = read.find(pattern, 0);
+    while(p1 != std::string::npos)
     {
-        if(seq[i] == 'C' || seq[i] == 'G')
-            ++num_gc;
-        ++num_total;
+        p1 = read.find(pattern,p1+pattern.size());
+        motifcount1 += 1;
     }
-    return num_gc / num_total;
+
+    size_t p2 = read.find(pattern_revcomp, 0);
+    while(p2 != std::string::npos)
+    {
+        p2 = read.find(pattern_revcomp,p2+pattern_revcomp.size());
+        motifcount2 += 1;
+    }
+
+    return motifcount1 > motifcount2? motifcount1:motifcount2;
+
+}
+
+
+double calcGC(const char *read, int32_t len)
+{
+    int32_t num_gc = 0;
+    for(int32_t i = 0; i < len; ++i)
+    {
+        if(read[i] == 'C' || read[i] == 'G')
+            ++num_gc;
+    }
+    return ((double)num_gc) / len;
 }
 
 void update_pattern(){
 
-	opt::PATTERN = ScanParameters::PATTERN;
-	opt::PATTERN_REV = ScanParameters::PATTERN_REVCOMP;
+        opt::PATTERN = ScanParameters::PATTERN;
+        opt::PATTERN_REV = ScanParameters::PATTERN_REVCOMP;
 
     // update total motif counts when read length and/or pattern have been specified by user
     ScanParameters::TEL_MOTIF_N = ScanParameters::READ_LENGTH/ScanParameters::PATTERN.size() +1;
-	if(opt::tel_k < 1 or opt::tel_k > ScanParameters::TEL_MOTIF_N-1){
-		std::cerr << "k out of bound. k must be an integer from 1 to " <<  ScanParameters::TEL_MOTIF_N-1 << "\n";
-		exit(EXIT_FAILURE);
-	}
+        if(opt::tel_k < 1 or opt::tel_k > ScanParameters::TEL_MOTIF_N-1){
+                std::cerr << "k out of bound. k must be an integer from 1 to " <<  ScanParameters::TEL_MOTIF_N-1 << "\n";
+                exit(EXIT_FAILURE);
+        }
 
 }
 
@@ -547,21 +581,21 @@ void update_pattern(){
 void parseScanOptions(int argc, char** argv)
 {
 
-	std::string bamlistfile =  "";
-	std::string rev = "";
+        std::string bamlistfile =  "";
+        std::string rev = "";
 
-	Headers hd;
+        Headers hd;
     for (char c; (c = getopt_long(argc, argv, shortopts, longopts, NULL)) != -1;)
     {
         std::istringstream arg(optarg != NULL ? optarg : "");
         switch (c)
         {
             case 'f':
-            	arg >> bamlistfile; break;
+                arg >> bamlistfile; break;
             case 'o':
-            	arg >> opt::outputfile; break;
+                arg >> opt::outputfile; break;
             case 'H':
-            	opt::writerheader=false; break;
+                opt::writerheader=false; break;
             case 'm':
                 opt::mergerg = true; break;
             case 'u':
@@ -569,36 +603,36 @@ void parseScanOptions(int argc, char** argv)
             case 'w':
                 opt::onebam = true; break;
             case 'h':
-        		for(size_t h=0; h<hd.headers.size();h++){
-        			std::cout << hd.headers[h] << ScanParameters::FIELD_SEP;
-        		}
-        		std::cout << "\n";
-        		exit(EXIT_SUCCESS);
+                        for(size_t h=0; h<hd.headers.size();h++){
+                                std::cout << hd.headers[h] << ScanParameters::FIELD_SEP;
+                        }
+                        std::cout << "\n";
+                        exit(EXIT_SUCCESS);
             case 'k':
-            	arg >> opt::tel_k;
-            	break;
+                arg >> opt::tel_k;
+                break;
             case 'r':
-				arg >> ScanParameters::READ_LENGTH;
-				if(ScanParameters::READ_LENGTH <= 0 || ScanParameters::READ_LENGTH > 100000){
-					std::cerr << "please specify valid read length that is greater than 0 and length than 100kb" << "\n";
-					exit(EXIT_FAILURE);
-				}
-				break;
+                                arg >> ScanParameters::READ_LENGTH;
+                                if(ScanParameters::READ_LENGTH <= 0 || ScanParameters::READ_LENGTH > 100000){
+                                        std::cerr << "please specify valid read length that is greater than 0 and length than 100kb" << "\n";
+                                        exit(EXIT_FAILURE);
+                                }
+                                break;
             case 'p':
 
-				break;
+                                break;
             case 'z':
-            	arg >> ScanParameters::PATTERN;
-				ScanParameters::PATTERN_REVCOMP = reverseComplement(ScanParameters::PATTERN);
-				std::cerr << "use user specified pattern " <<  ScanParameters::PATTERN << "\n";
-				std::cerr << "reverse complement " <<  ScanParameters::PATTERN_REVCOMP << "\n";
-            	break;
+                arg >> ScanParameters::PATTERN;
+                                ScanParameters::PATTERN_REVCOMP = reverseComplement(ScanParameters::PATTERN);
+                                std::cerr << "use user specified pattern " <<  ScanParameters::PATTERN << "\n";
+                                std::cerr << "reverse complement " <<  ScanParameters::PATTERN_REVCOMP << "\n";
+                break;
             case 'e':
-            	arg >> opt::exomebedfile;
-            	opt::exomebed = readBedAsVector(opt::exomebedfile);
-            	std::cout << "loaded "<< opt::exomebed.size() << " exome regions \n"<< std::endl;
-//            	std::cout << opt::exomebed << "\n";
-            	break;
+                arg >> opt::exomebedfile;
+                opt::exomebed = readBedAsVector(opt::exomebedfile);
+                std::cout << "loaded "<< opt::exomebed.size() << " exome regions \n"<< std::endl;
+//              std::cout << opt::exomebed << "\n";
+                break;
 
             case OPT_HELP:
                 std::cout << TELSEQ_USAGE_MESSAGE;
@@ -618,31 +652,31 @@ void parseScanOptions(int argc, char** argv)
 
     if (argc - optind < 1) // no argument specified
     {
-    	// check if it is from pipe
-		if(!isatty(fileno(stdin))){
-			std::string line;
-			while (std::getline(std::cin, line))
-			{
-				if(line.empty()){
-					continue;
-				}
-				opt::bamlist.push_back(line);
-			}
-		}else if(bamlistfile.empty() ){ // check if not from a pipe, -f must be spceified
-//    		std::cerr << SUBPROGRAM ": No BAM specified. Please specify BAM either directly, by using -f option or piping BAM file path.\n";
-    		std::cout << TELSEQ_USAGE_MESSAGE;
-    		exit(EXIT_FAILURE);
-    	}
+        // check if it is from pipe
+                if(!isatty(fileno(stdin))){
+                        std::string line;
+                        while (std::getline(std::cin, line))
+                        {
+                                if(line.empty()){
+                                        continue;
+                                }
+                                opt::bamlist.push_back(line);
+                        }
+                }else if(bamlistfile.empty() ){ // check if not from a pipe, -f must be spceified
+//              std::cerr << SUBPROGRAM ": No BAM specified. Please specify BAM either directly, by using -f option or piping BAM file path.\n";
+                std::cout << TELSEQ_USAGE_MESSAGE;
+                exit(EXIT_FAILURE);
+        }
     }
 
     else if (argc - optind >= 1) // if arguments are specified
     {
-    	// -f has higher priority, when specified, ignore arguments.
-    	if(bamlistfile.empty()){
-    		for(int i = optind; i < argc; ++i ){
-    		    opt::bamlist.push_back(argv[i]);
-    		}
-    	}
+        // -f has higher priority, when specified, ignore arguments.
+        if(bamlistfile.empty()){
+                for(int i = optind; i < argc; ++i ){
+                    opt::bamlist.push_back(argv[i]);
+                }
+        }
     }
 
     // read in bamlist
@@ -659,9 +693,9 @@ void parseScanOptions(int argc, char** argv)
 
         while(getline(*pReader, line))
         {
-        	if(line.empty()){
-        		continue;
-        	}
+                if(line.empty()){
+                        continue;
+                }
             opt::bamlist.push_back(line);
         }
 
@@ -678,8 +712,8 @@ void parseScanOptions(int argc, char** argv)
 
 int main(int argc, char** argv)
 {
-	Timer* pTimer = new Timer("scan BAM");
-	parseScanOptions(argc, argv);
+        Timer* pTimer = new Timer("scan BAM");
+        parseScanOptions(argc, argv);
     scanBam();
     delete pTimer;
     return 0;
