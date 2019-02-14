@@ -128,7 +128,6 @@ int main(int argc, char const *argv[])
         read[b1->core.l_qseq] = 0;
 
         double gc = calcGC(read, b1->core.l_qseq);
-        // fprintf(stderr, "%f\n", gc);
         // get index for GC bin.
         int idx = (int)(gc * GC_BINCOUNT);
         // assert(idx >=0 && idx <= ScanParameters::GC_BIN_N-1);
@@ -147,6 +146,9 @@ int main(int argc, char const *argv[])
             telcounts_len = ptn_count + 1;
         }
         telcounts[ptn_count] += 1;
+
+        fprintf(stderr, "%lu\t%f\n", ptn_count, gc);
+        // fprintf(stderr, "%lu\t%f\t%s\n", ptn_count, gc, read);
     }
     bam_destroy1(b1);
     bam_hdr_destroy(h);
