@@ -19,9 +19,9 @@
 
 #define TEL_MOTIF_CUTOFF 7
 
-static double calcTelLength(const size_t telomere_count, const size_t gc_telomeric_count)
+static double calcTelLength(const size_t telomere_count, const size_t gc_count)
 {
-    if(gc_telomeric_count == 0)
+    if(gc_count == 0)
     {
         exit(EXIT_FAILURE);
         return (double)NAN;
@@ -29,7 +29,7 @@ static double calcTelLength(const size_t telomere_count, const size_t gc_telomer
     // fprintf(stderr, "telacc: %f\n", acc);
 
     // GENOME_LENGTH_AT_TEL_GC / LENGTH_UNIT / TELOMERE_ENDS / k (for kbases)
-    return ((double)telomere_count / gc_telomeric_count) * 332720800. / 1000. / 46.;
+    return ((double)telomere_count / gc_count) * 332720800. / 1000. / 46.;
 }
 
 static size_t countMotif(const char *read)
@@ -70,9 +70,9 @@ static double calcGC(const char *read, int32_t len)
     return ((double)num_gc) / len;
 }
 
-void print_table(size_t ntotal, size_t ntotal_good, size_t nmapped, size_t nduplicates, size_t telomere_gc_count, size_t gc_telomeric_count, size_t telomere_count, size_t *telcounts, size_t *gccounts)
+void print_table(size_t ntotal, size_t ntotal_good, size_t nmapped, size_t nduplicates, size_t telomere_gc_count, size_t gc_count, size_t telomere_count, size_t *telcounts, size_t *gccounts)
 {
-    // header TODO: missing 'sample'
+    /* Try to match old style */
     printf("ReadGroup\tLibrary\tSample\tTotal\tMapped\tDuplicates\tLENGTH_ESTIMATE");
     for (int i = 0; i < 17; ++i)
     {
@@ -98,7 +98,7 @@ void print_table(size_t ntotal, size_t ntotal_good, size_t nmapped, size_t ndupl
     // LABEL_DUP
     printf("%lu\t", nduplicates);
     // LABEL_LEN
-    printf("%f\t", calcTelLength(telomere_gc_count, gc_telomeric_count));
+    printf("%f\t", calcTelLength(telomere_gc_count, gc_count));
 
     // TODO the top buckets are discarded
     for(int i = 0; i < 17; i++){
@@ -110,9 +110,10 @@ void print_table(size_t ntotal, size_t ntotal_good, size_t nmapped, size_t ndupl
     printf("\n");
 }
 
-void print_table_new(size_t ntotal, size_t ntotal_good, size_t nmapped, size_t nduplicates, size_t telomere_gc_count, size_t gc_telomeric_count, size_t telomere_count, size_t *telcounts, size_t *gccounts)
+void print_table_new(size_t ntotal, size_t ntotal_good, size_t nmapped, size_t nduplicates, size_t telomere_gc_count, size_t gc_count, size_t telomere_count, size_t *telcounts, size_t *gccounts)
 {
-    printf("%f\n", calcTelLength(telomere_gc_count, gc_telomeric_count));
+    // it is a table of one value, the result
+    printf("%f\n", calcTelLength(telomere_gc_count, gc_count));
 }
 
 int main(int argc, char const *argv[])
@@ -148,7 +149,7 @@ int main(int argc, char const *argv[])
     size_t gccounts_len = GC_BINCOUNT + 1;
     size_t *gccounts = calloc(gccounts_len, sizeof(*gccounts));
     // count reads that pass GC content test
-    size_t gc_telomeric_count = 0;
+    size_t gc_count = 0;
 
     int read_err;
     while ((read_err = sam_read1(f, h, b1)) >= 0)
@@ -163,8 +164,10 @@ int main(int argc, char const *argv[])
             nduplicates += 1;
         }
 
-        // only use primary reads
-        if (b1->core.flag & (BAM_FDUP | BAM_FSUPPLEMENTARY | BAM_FSECONDARY))
+        // only use primary reads with required length
+        if (
+            (b1->core.flag & (BAM_FDUP | BAM_FSUPPLEMENTARY | BAM_FSECONDARY))
+            && (b1->core.l_qseq >= 6 * 7))
         {
             continue;
         }
@@ -202,22 +205,22 @@ int main(int argc, char const *argv[])
         }
         telcounts[ptn_count] += 1;
 
-        gc_telomeric_count += (GC_TELOMERIC_LOWERBOUND <= gc) && (gc < GC_TELOMERIC_UPPERBOUND);
-        telomere_count += ptn_count > TEL_MOTIF_CUTOFF;
-        telomere_gc_count += (ptn_count > TEL_MOTIF_CUTOFF) && (GC_TELOMERIC_LOWERBOUND <= gc) && (gc < GC_TELOMERIC_UPPERBOUND);
+        gc_count += (GC_TELOMERIC_LOWERBOUND <= gc) && (gc < GC_TELOMERIC_UPPERBOUND);
+        telomere_count += ptn_count >= TEL_MOTIF_CUTOFF;
+        telomere_gc_count += (ptn_count >= TEL_MOTIF_CUTOFF) && (GC_TELOMERIC_LOWERBOUND <= gc) && (gc < GC_TELOMERIC_UPPERBOUND);
 
         // fprintf(stderr, "%lu\t%f\t%s\n", ptn_count, gc, (b1->core.flag & (BAM_FDUP | BAM_FSUPPLEMENTARY | BAM_FSECONDARY)) ? "False" : "True");
-        // fprintf(stderr, "%lu\t%f\t%s\n", ptn_count, gc, read);
+        // fprintf(stderr, "%lu\t%f\t%s\t%s\n", ptn_count, gc, (b1->core.flag & (BAM_FDUP | BAM_FSUPPLEMENTARY | BAM_FSECONDARY)) ? "False" : "True", read);
     }
     bam_destroy1(b1);
     bam_hdr_destroy(h);
     sam_close(f);
 
     // like old telseq
-    // print_table(ntotal, ntotal_good, nmapped, nduplicates, telomere_gc_count, gc_telomeric_count, telomere_count, telcounts, gccounts);
+    // print_table(ntotal, ntotal_good, nmapped, nduplicates, telomere_gc_count, gc_count, telomere_count, telcounts, gccounts);
 
-    // just result
-    print_table_new(ntotal, ntotal_good, nmapped, nduplicates, telomere_gc_count, gc_telomeric_count, telomere_count, telcounts, gccounts);
+    // just the result
+    print_table_new(ntotal, ntotal_good, nmapped, nduplicates, telomere_gc_count, gc_count, telomere_count, telcounts, gccounts);
 
     free(gccounts);
     free(telcounts);
