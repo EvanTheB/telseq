@@ -168,7 +168,7 @@ int main(int argc, char const *argv[])
 
         // only use primary reads with required length
         if (
-            (b1->core.flag & (BAM_FDUP | BAM_FSUPPLEMENTARY | BAM_FSECONDARY))
+            (b1->core.flag & (BAM_FSUPPLEMENTARY | BAM_FSECONDARY))
             && (b1->core.l_qseq >= 6 * TEL_MOTIF_CUTOFF))
         {
             continue;
