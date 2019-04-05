@@ -211,8 +211,15 @@ int main(int argc, char const *argv[])
         telomere_count += ptn_count >= TEL_MOTIF_CUTOFF;
         telomere_gc_count += (ptn_count >= TEL_MOTIF_CUTOFF) && (GC_TELOMERIC_LOWERBOUND <= gc) && (gc < GC_TELOMERIC_UPPERBOUND);
 
-        // fprintf(stderr, "%lu\t%f\t%s\n", ptn_count, gc, (b1->core.flag & (BAM_FDUP | BAM_FSUPPLEMENTARY | BAM_FSECONDARY)) ? "False" : "True");
-        // fprintf(stderr, "%lu\t%f\t%s\t%s\n", ptn_count, gc, (b1->core.flag & (BAM_FDUP | BAM_FSUPPLEMENTARY | BAM_FSECONDARY)) ? "False" : "True", read);
+        // tel_count, gc%, is_dup, is_primary, length
+        // fprintf(stderr,
+        //     "%lu\t%f\t%s\t%s\t%d\n",
+        //     ptn_count,
+        //     gc,
+        //     (b1->core.flag & BAM_FDUP) ? "True" : "False",
+        //     (b1->core.flag & (BAM_FSUPPLEMENTARY | BAM_FSECONDARY)) ? "False" : "True",
+        //     b1->core.l_qseq
+        // );
     }
     bam_destroy1(b1);
     bam_hdr_destroy(h);

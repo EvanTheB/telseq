@@ -13,54 +13,105 @@ def tel(t, g):
 def telr(d, l, h):
     return tel(
         sum(d.loc[:,
-                  0] >= 7),
+                  'tel_count'] >= 7),
         sum((d.loc[:,
-                   1] <= (h)) & (d.loc[:,
-                                       1] >= (l)))
+                   'gc'] <= (h)) & (d.loc[:,
+                                          'gc'] >= (l)))
     )
 
 
 def telr_new(d, l, h):
     return tel(
+        sum(
+            (d.loc[:,
+                   'tel_count'] >= 7)
+            & (d.loc[:,
+                     'gc'] <= (h))
+            & (d.loc[:,
+                     'gc'] >= (l))
+        ),
         sum((d.loc[:,
-                   0] >= 7)
+                   'gc'] <= (h))
             & (d.loc[:,
-                     1] <= (h))
-            & (d.loc[:,
-                     1] >= (l))),
-        sum((d.loc[:,
-                   1] <= (h))
-            & (d.loc[:,
-                     1] >= (l)))
+                     'gc'] >= (l)))
     )
 
 
-def do(file):
+def yuleq(d, excl):
+    def Q(OR):
+        (OR - 1) / (OR + 1)
 
-    d = pd.read_csv(file, sep='\t', header=None)
+    gb = d.groupby(d.columns).size()
+    print(gb)
+    ret = pd.DataFrame(columns=d.columns)
+    for c1 in d.columns:
+        for c2 in d.columns:
+            a = gb.xs(True, level=c1).xs(True, level=c2)
+            b = gb.xs(True, level=c1).xs(False, level=c2)
+            c = gb.xs(False, level=c1).xs(True, level=c2)
+            d = gb.xs(False, level=c1).xs(False, level=c2)
+            ret.loc[c1, c2] = Q((a * d) / (b * c))
+    return ret
 
-    dd = d[d.loc[:, 2]]
 
-    print(sum(d.loc[:, 0] >= 7))
-    print(sum(dd.loc[:, 0] >= 7))
+def three_binary_test(d):
+    print(len(d))
 
-    print(sum((d.loc[:, 1] <= 0.52) & (d.loc[:, 1] >= 0.48)))
-    print(sum((dd.loc[:, 1] <= 0.52) & (dd.loc[:, 1] >= 0.48)))
+    d['good_length'] = d.length > 7 * 6
+    d['is_telomere_old'] = (d.tel_count >= 7)
+    d['is_telomere'] = (d.tel_count >= 7) & (d.gc >= 0.48) & (d.gc < 0.52)
+    d['is_gc'] = (d.gc >= 0.48) & (d.gc < 0.52)
+
+    # print(d.pivot_table(index='is_telomere', columns='is_dup'))
+    # print(d.loc[:, ['is_telomere', 'is_dup']].pivot_table(index='is_telomere', columns='is_dup', aggfunc=len), "\n")
+    print(pd.crosstab(d.is_telomere, d.is_dup, margins=True, normalize=True), "\n")
+    print(pd.crosstab(d.is_telomere_old, d.is_dup, margins=True, normalize=True), "\n")
+
+    # dd = d.groupby(['is_dup', 'is_primary', 'good_length'])
+    # dd = d[d.is_primary].groupby(['is_dup', 'good_length'])
+    dd = d[d.is_primary].groupby('is_dup')
+    cs = dd.sum().loc[:, ['is_telomere', 'is_telomere_old', 'is_gc']]
+
+    print(cs)
+    print()
+    print("old\n", tel(cs.is_telomere_old, cs.is_gc))
+    print("new\n", tel(cs.is_telomere, cs.is_gc))
+    print()
+    print(tel(sum(d.is_telomere_old), sum(d.is_gc)))
+    print(tel(sum(d.is_telomere), sum(d.is_gc)))
+    # print(dd.aggregate(lambda s: tel(sum(s.is_telomere), sum(s.is_gc))))
+
+    # need a corr that accounts for weighting
+    # print(d.loc[:, ['is_dup', 'is_primary', 'good_length', 'tel_count']].corr())
+    # print(d.loc[:, ['is_dup', 'is_primary', 'good_length', 'is_telomere']].corr())
+    # print(yuleq(d.loc[:, ['is_dup', 'is_primary', 'good_length', 'is_telomere']]))
+
+
+def do(d):
+    dd = d[d.loc[:, 'is_dup']]
+
+    print(sum(d.loc[:, 'tel_count'] >= 7))
+    print(sum(dd.loc[:, 'tel_count'] >= 7))
+
+    print(sum((d.loc[:, 'gc'] <= 0.52) & (d.loc[:, 'gc'] >= 0.48)))
+    print(sum((dd.loc[:, 'gc'] <= 0.52) & (dd.loc[:, 'gc'] >= 0.48)))
 
     print(
         sum(
             (d.loc[:,
-                   0] >= 7) & (d.loc[:,
-                                     1] <= 0.52) & (d.loc[:,
-                                                          1] >= 0.48)
+                   'tel_count'] >= 7) & (d.loc[:,
+                                               'gc'] <= 0.52) &
+            (d.loc[:,
+                   'gc'] >= 0.48)
         )
     )
     print(
         sum(
             (dd.loc[:,
-                    0] >= 7) & (dd.loc[:,
-                                       1] <= 0.52) & (dd.loc[:,
-                                                             1] >= 0.48)
+                    'tel_count'] >= 7) & (dd.loc[:,
+                                                 'gc'] <= 0.52) &
+            (dd.loc[:,
+                    'gc'] >= 0.48)
         )
     )
 
@@ -107,8 +158,19 @@ def do2(file):
 
 def main():
     for f in sys.argv[1:]:
-        do(f)
-        # do2(f)
+        d = pd.read_csv(
+            f,
+            sep='\t',
+            header=None,
+            names=["tel_count",
+                   "gc",
+                   "is_dup",
+                   "is_primary",
+                   "length"]
+        )
+        # do(d)
+        # do2(d)
+        three_binary_test(d)
 
 
 if __name__ == '__main__':
