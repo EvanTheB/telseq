@@ -17,7 +17,9 @@
 #define GC_UPPERBOUND 29 // 0.6
 #define GC_TELOMERIC_UPPERBOUND 0.52
 
+#ifndef TEL_MOTIF_CUTOFF
 #define TEL_MOTIF_CUTOFF 7
+#endif
 
 static double calcTelLength(const size_t telomere_count, const size_t gc_count)
 {
@@ -167,7 +169,7 @@ int main(int argc, char const *argv[])
         // only use primary reads with required length
         if (
             (b1->core.flag & (BAM_FDUP | BAM_FSUPPLEMENTARY | BAM_FSECONDARY))
-            && (b1->core.l_qseq >= 6 * 7))
+            && (b1->core.l_qseq >= 6 * TEL_MOTIF_CUTOFF))
         {
             continue;
         }
