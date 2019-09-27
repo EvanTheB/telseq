@@ -66,6 +66,7 @@ def three_binary_test(d):
     # print(d.loc[:, ['is_telomere', 'is_dup']].pivot_table(index='is_telomere', columns='is_dup', aggfunc=len), "\n")
     print(pd.crosstab(d.is_telomere, d.is_dup, margins=True, normalize=True), "\n")
     print(pd.crosstab(d.is_telomere_old, d.is_dup, margins=True, normalize=True), "\n")
+    print(pd.crosstab(d.is_gc, d.is_dup, margins=True, normalize=True), "\n")
 
     # dd = d.groupby(['is_dup', 'is_primary', 'good_length'])
     # dd = d[d.is_primary].groupby(['is_dup', 'good_length'])
